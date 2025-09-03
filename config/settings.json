@@ -1,0 +1,9 @@
+{
+  "sso_url": "https://sso-siasn.bkn.go.id/auth/realms/public-siasn/protocol/openid-connect/auth?client_id=bkn-portal&redirect_uri=https%3A%2F%2Fasndigital.bkn.go.id%2F&state=d58d6a22-faad-4e4b-aef9-6c9ef5de1d96&response_mode=fragment&response_type=code&scope=openid&nonce=a666e832-c74f-43dc-8b03-b0b474c22d95&code_challenge=_AOPwJHxKMQ-oMlHCF6e2nIAE2Fqbx2m0711i90Ds0o&code_challenge_method=S256",
+  "username_field": "#username",
+  "password_field": "#password",
+  "login_button": "#kc-login",
+  "redirect_url": "https://asndigital.bkn.go.id/",
+  "timeout": 15,
+  "totp_url": "http://host.docker.internal:8001/totp"
+}

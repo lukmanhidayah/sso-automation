@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# VS Code
+.vscode/
+
+# Virtual environments & env files
+venv/
+.env
+*.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+data/logs/
+logs/
+
+# Data & downloads
+data/downloads/
+data/*.json
+
+# ChromeDriver
+chromedriver/
+
+# Config secrets
+config/credentials.env
+config/drive/credentials.json
+config/drive/drive_config.json
+
+# Shell scripts
+*.sh
+
+# Excel files
+data/*.xlsx
