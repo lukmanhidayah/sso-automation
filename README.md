@@ -80,6 +80,7 @@ Linux/Mac (detached/daemon, setiap 30 menit)
 
 ```bash
 docker run -d --name sso-automation --restart unless-stopped \
+  --add-host=host.docker.internal:host-gateway \
   -e SCHEDULE_MINUTES=30 \
   -v "$PWD/config:/app/config" \
   -v "$PWD/data:/app/data" \
