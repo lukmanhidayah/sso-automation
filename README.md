@@ -1,6 +1,6 @@
 # SSO Automation
 
-Automasi login ke SSO SIASN, unduh data Monitoring Usulan via API, konversi ke Excel, dan upload ke Google Drive. Proses dijalankan otomatis setiap 30 menit.
+Automasi login ke SSO SIASN, unduh data Monitoring Usulan via API, konversi ke Excel, dan upload ke Google Drive. Proses dijalankan otomatis setiap 15 menit.
 
 ## Fitur
 
@@ -9,7 +9,7 @@ Automasi login ke SSO SIASN, unduh data Monitoring Usulan via API, konversi ke E
 - Unduh API Monitoring Usulan memakai bearer token dari localStorage (`src/download_monitoring_usulan.py:1`).
 - Konversi JSON → XLSX (openpyxl) (`src/download_monitoring_usulan.py:1`).
 - Upload/replace ke Google Drive (PyDrive2) (`src/drive_upload.py:1`).
-- Scheduler built-in tiap 30 menit di entrypoint (`src/main.py:1`).
+- Scheduler built-in tiap 15 menit di entrypoint (`src/main.py:1`).
 
 ## Prasyarat (Lokal)
 
@@ -40,11 +40,11 @@ Output:
 - Excel: `data/downloads/monitoring_usulan.xlsx:1`
 - Log: `data/logs/app.log:1`
 
-## Scheduler 30 Menit
+## Scheduler 15 Menit
 
 - Sudah tertanam di `src/main.py:1` (loop `time.sleep`).
 - Menghentikan: Ctrl+C.
-- Mengubah interval: edit `interval_minutes` di `src/main.py:1` (default 30). Jika ingin via env/setting, beri tahu saya untuk menambahkan `SCHEDULE_MINUTES` atau kunci di `settings.json`.
+- Mengubah interval: edit `interval_minutes` di `src/main.py:1` (default 15). Jika ingin via env/setting, beri tahu saya untuk menambahkan `SCHEDULE_MINUTES` atau kunci di `settings.json`.
 
 ## Alternatif: Cron (opsional)
 
@@ -52,7 +52,7 @@ Output:
 - Contoh host cron:
 
 ```cron
-*/30 * * * * /usr/bin/python /path/to/repo/src/main.py >> /path/to/repo/data/logs/cron.log 2>&1
+*/15 * * * * /usr/bin/python /path/to/repo/src/main.py >> /path/to/repo/data/logs/cron.log 2>&1
 ```
 
 ## Menjalankan Dengan Docker
@@ -66,22 +66,22 @@ docker build -t sso-automation .
 
 - Jalankan container (mount config & data):
 
-Windows PowerShell (detached/daemon, setiap 30 menit)
+Windows PowerShell (detached/daemon, setiap 15 menit)
 
 ```powershell
 docker run -d --name sso-automation --restart unless-stopped `
-  -e SCHEDULE_MINUTES=30 `
+  -e SCHEDULE_MINUTES=15 `
   -v "${PWD}/config:/app/config" `
   -v "${PWD}/data:/app/data" `
   sso-automation
 ```
 
-Linux/Mac (detached/daemon, setiap 30 menit)
+Linux/Mac (detached/daemon, setiap 15 menit)
 
 ```bash
 docker run -d --name sso-automation --restart unless-stopped \
   --add-host=host.docker.internal:host-gateway \
-  -e SCHEDULE_MINUTES=30 \
+  -e SCHEDULE_MINUTES=15 \
   -v "$PWD/config:/app/config" \
   -v "$PWD/data:/app/data" \
   sso-automation
@@ -130,7 +130,7 @@ docker stop sso-automation && docker rm sso-automation
 
 ## Struktur Proyek
 
-- `src/main.py:1` — entry point + scheduler 30 menit.
+- `src/main.py:1` — entry point + scheduler 15 menit.
 - `src/browser.py:1` — setup Selenium/Chrome.
 - `src/sso_login.py:1` — alur login SSO + TOTP opsional.
 - `src/utils.py:1` — simpan/muat cookies & localStorage.

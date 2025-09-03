@@ -58,9 +58,9 @@ def run_once():
 if __name__ == "__main__":
     # Izinkan override interval via environment variable SCHEDULE_MINUTES
     try:
-        interval_minutes = int(os.getenv("SCHEDULE_MINUTES", "30"))
+        interval_minutes = int(os.getenv("SCHEDULE_MINUTES", "15"))
     except ValueError:
-        interval_minutes = 30
+        interval_minutes = 15
     print(f"Scheduler aktif: menjalankan job setiap {interval_minutes} menit.")
     while True:
         start_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
