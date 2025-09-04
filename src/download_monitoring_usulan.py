@@ -1409,6 +1409,11 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
             nested = (it or {}).get("usulan_data") or {}
             nested_data = nested.get("data") or {}
             no_peserta = nested_data.get("no_peserta") or ""
+            if no_peserta not in selected_no_peserta:
+                continue
+            if no_peserta in processed_no_peserta:
+                print(f"Duplikasi dilewati: {no_peserta}")
+                continue  # Lewati duplikasi
             processed_no_peserta.add(no_peserta)
             nama = (it or {}).get("nama") or nested_data.get("nama") or ""
             status_usulan = (it or {}).get("status_usulan") or ""
@@ -1423,6 +1428,90 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
             )
             if not no_peserta:
                 missing_count += 1
+
+    missing_no_peserta = selected_no_peserta - processed_no_peserta
+    print(f"Total no_peserta tidak ditemukan: {len(missing_no_peserta)}")
+
+    # Load token for additional requests
+    localstorage_path = "data/sso_localstorage.json"  # Adjust if needed
+    token = load_sso_token(localstorage_path)
+
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+        "Authorization": f"Bearer {token}",
+        "Connection": "keep-alive",
+        "Origin": "https://siasn-instansi.bkn.go.id",
+        "Referer": "https://siasn-instansi.bkn.go.id/layananPengadaan/monitoringUsulan",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0"
+        ),
+        "sec-ch-ua": '"Not;A=Brand";v="99", "Microsoft Edge";v="139", "Chromium";v="139"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    }
+
+    for no_peserta in missing_no_peserta:
+        print(f"Mencari data untuk no_peserta: {no_peserta}")
+        url = (
+            "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
+            f"?no_peserta={no_peserta}&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024&limit=1&offset=0"
+        )
+        req = Request(url, headers=headers, method="GET")
+        try:
+            with urlopen(req) as resp:
+                status = resp.getcode()
+                body = resp.read()
+                if status != 200:
+                    raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
+        except HTTPError as e:
+            detail = None
+            try:
+                detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            msg = f"Request failed for {no_peserta}: {e.code} {e.reason}"
+            if detail:
+                msg += f"\n{detail}"
+            print(msg)
+            continue
+        except URLError as e:
+            print(f"Network error for {no_peserta}: {e.reason}")
+            continue
+
+        resp_json = json.loads(body)
+        page_data = resp_json.get("data", [])
+        if page_data:
+            item = page_data[0]
+            nested = (item or {}).get("usulan_data") or {}
+            nested_data = nested.get("data") or {}
+            nama = (item or {}).get("nama") or nested_data.get("nama") or ""
+            status_usulan = (item or {}).get("status_usulan") or ""
+            status_id = str(status_usulan)
+            status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
+            ws.append(
+                [
+                    no_peserta,
+                    nama,
+                    status_usulan_name,
+                ]
+            )
+            print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
+        else:
+            ws.append(
+                [
+                    no_peserta,
+                    "Tidak Ditemukan",
+                    "Tidak Ditemukan",
+                ]
+            )
+            print(f"Data masih tidak ditemukan untuk {no_peserta}")
+        time.sleep(1)  # Delay to avoid rate limiting
 
     print(f"Total item diproses: {len(processed_no_peserta)}")
     print(f"Item dengan no_peserta kosong: {missing_count}")
