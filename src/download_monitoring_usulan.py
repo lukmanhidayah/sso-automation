@@ -12,7 +12,7 @@ except Exception:
 
 API_URL = (
     "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
-    "?no_peserta=&nama=&tgl_usulan=2025-08-22&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=&limit=100000&offset=0"
+    "?no_peserta=&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024&limit=100000&offset=0"
 )
 
 # Mapping of status_usulan ID to descriptive name
