@@ -188,52 +188,56 @@ def download_monitoring_usulan_paginated(
         "sec-ch-ua-platform": '"Windows"',
     }
 
-    all_data = []
-    offset = 0
-    total = None
-    while True:
-        url = (
-            "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
-            f"?no_peserta=&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024"
-            f"&limit={per_page}&offset={offset}"
-        )
-        req = Request(url, headers=headers, method="GET")
-        try:
-            with urlopen(req) as resp:
-                status = resp.getcode()
-                body = resp.read()
-                if status != 200:
-                    raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
-        except HTTPError as e:
-            detail = None
-            try:
-                detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            msg = f"Request failed: {e.code} {e.reason}"
-            if detail:
-                msg += f"\n{detail}"
-            raise RuntimeError(msg)
-        except URLError as e:
-            raise RuntimeError(f"Network error: {e.reason}")
-
-        resp_json = json.loads(body)
-        if total is None:
-            total = resp_json.get("meta", {}).get("total", 0)
-            print(f"Total data: {total}")
-        page_data = resp_json.get("data", [])
-        print(f"Fetched {len(page_data)} items (offset {offset})")
-        all_data.extend(page_data)
-
-        # Pagination logic
-        if len(page_data) < per_page:
-            break
-        offset += per_page
-        time.sleep(1)  # Optional: avoid rate limit
-
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
-        json.dump({"data": all_data}, f, ensure_ascii=False)
+        f.write('{"data":[')
+        offset = 0
+        total = None
+        first = True
+        while True:
+            url = (
+                "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
+                f"?no_peserta=&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024"
+                f"&limit={per_page}&offset={offset}"
+            )
+            req = Request(url, headers=headers, method="GET")
+            try:
+                with urlopen(req) as resp:
+                    status = resp.getcode()
+                    body = resp.read()
+                    if status != 200:
+                        raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
+            except HTTPError as e:
+                detail = None
+                try:
+                    detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                msg = f"Request failed: {e.code} {e.reason}"
+                if detail:
+                    msg += f"\n{detail}"
+                raise RuntimeError(msg)
+            except URLError as e:
+                raise RuntimeError(f"Network error: {e.reason}")
+
+            resp_json = json.loads(body)
+            if total is None:
+                total = resp_json.get("meta", {}).get("total", 0)
+                print(f"Total data: {total}")
+            page_data = resp_json.get("data", [])
+            print(f"Fetched {len(page_data)} items (offset {offset})")
+
+            for item in page_data:
+                if not first:
+                    f.write(",")
+                f.write(json.dumps(item, ensure_ascii=False))
+                first = False
+
+            if len(page_data) < per_page:
+                break
+            offset += per_page
+            time.sleep(1)
+        f.write("]}")
     print(f"Saved all data to {out_path}")
 
 def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:

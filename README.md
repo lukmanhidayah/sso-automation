@@ -79,7 +79,7 @@ docker run -d --name sso-automation --restart unless-stopped `
 Linux/Mac (detached/daemon, setiap 15 menit)
 
 ```bash
-docker run -d --name sso-automation --restart unless-stopped \
+docker run --memory="1.5g" --memory-swap="2g" -d --name sso-automation --restart unless-stopped \
   --add-host=host.docker.internal:host-gateway \
   -e SCHEDULE_MINUTES=15 \
   -v "$PWD/config:/app/config" \
