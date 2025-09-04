@@ -3,6 +3,7 @@ import os
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from typing import Any, Dict, List
+import ijson
 
 try:
     from openpyxl import Workbook
@@ -110,6 +111,7 @@ def load_sso_token(path: str) -> str:
 def download_monitoring_usulan(
     out_path: str, localstorage_path: str = "data/sso_localstorage.json"
 ) -> None:
+    print("Downloading monitoring_usulan data...")
     token = load_sso_token(localstorage_path)
 
     headers = {
@@ -191,55 +193,53 @@ def _extract_rows(payload: Dict[str, Any]) -> List[List[Any]]:
 
 
 def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
-    """Convert downloaded monitoring_usulan JSON into an Excel file.
-
-    Columns: no_peserta, nama, jenis_pengadaan, jenis_formasi_nama, tgl_usulan, tgl_pengiriman_kelayanan, status_usulan
-    """
+    """Efficiently convert large monitoring_usulan JSON into an Excel file."""
+    print("Converting JSON to Excel (streaming)...")
     if Workbook is None:
-        raise RuntimeError(
-            "openpyxl not available. Please install it (e.g., pip install openpyxl)."
-        )
+        raise RuntimeError("openpyxl not available. Please install it (e.g., pip install openpyxl).")
 
     if not os.path.exists(json_path):
         raise FileNotFoundError(f"JSON file not found: {json_path}")
 
-    with open(json_path, "r", encoding="utf-8") as f:
-        payload = json.load(f)
-
-    rows = _extract_rows(payload if isinstance(payload, dict) else {})
-
-    # Convert status_usulan ID to descriptive name
-    for r in rows:
-        status_id = str(r[6])
-        r[6] = STATUS_USULAN_MAP.get(status_id, status_id)
-
     os.makedirs(os.path.dirname(excel_path), exist_ok=True)
-
     wb = Workbook()
     ws = wb.active
     ws.title = "monitoring_usulan"
-    # Header
-    ws.append(
-        [
-            "No. Peserta",
-            "Nama",
-            "Jenis Pengadaan",
-            "Jenis Formasi",
-            "Tanggal Buat Usulan",
-            "Tanggal Pengiriman",
-            "Status Usulan",
-        ]
-    )
-    # Set minimum column width to 50
-    for col in ws.columns:
-        col_letter = col[0].column_letter
-        ws.column_dimensions[col_letter].width = max(
-            ws.column_dimensions[col_letter].width or 0, 50
-        )
-    for r in rows:
-        ws.append(r)
-        # Set minimum column width to 50 for all columns
-        for col_idx in range(1, ws.max_column + 1):
-            col_letter = ws.cell(row=1, column=col_idx).column_letter
-            ws.column_dimensions[col_letter].width = 50
+    ws.append([
+        "No. Peserta",
+        "Nama",
+        "Jenis Pengadaan",
+        "Jenis Formasi",
+        "Tanggal Buat Usulan",
+        "Tanggal Pengiriman",
+        "Status Usulan",
+    ])
+    # Set minimum column width to 50 (once)
+    for col_idx in range(1, 8):
+        col_letter = ws.cell(row=1, column=col_idx).column_letter
+        ws.column_dimensions[col_letter].width = 50
+
+    with open(json_path, "r", encoding="utf-8") as f:
+        # Stream each item in "data"
+        for it in ijson.items(f, "data.item"):
+            nested = (it or {}).get("usulan_data") or {}
+            nested_data = nested.get("data") or {}
+            no_peserta = nested_data.get("no_peserta") or ""
+            nama = (it or {}).get("nama") or nested_data.get("nama") or ""
+            jenis_pengadaan = "PPPK"
+            jenis_formasi_nama = (it or {}).get("jenis_formasi_nama") or ""
+            tgl_usulan = (it or {}).get("tgl_usulan") or ""
+            tgl_pengiriman_kelayanan = (it or {}).get("tgl_pengiriman_kelayanan") or ""
+            status_usulan = (it or {}).get("status_usulan") or ""
+            status_id = str(status_usulan)
+            status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
+            ws.append([
+                no_peserta,
+                nama,
+                jenis_pengadaan,
+                jenis_formasi_nama,
+                tgl_usulan,
+                tgl_pengiriman_kelayanan,
+                status_usulan_name,
+            ])
     wb.save(excel_path)
