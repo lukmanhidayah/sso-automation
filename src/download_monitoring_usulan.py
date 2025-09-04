@@ -4,6 +4,7 @@ from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 from typing import Any, Dict, List
 import ijson
+import time
 
 try:
     from openpyxl import Workbook
@@ -161,39 +162,82 @@ def download_monitoring_usulan(
     with open(out_path, "wb") as f:
         f.write(body)
 
+def download_monitoring_usulan_paginated(
+    out_path: str, localstorage_path: str = "data/sso_localstorage.json", per_page: int = 20000
+) -> None:
+    print("Downloading monitoring_usulan data with pagination...")
+    token = load_sso_token(localstorage_path)
 
-def _extract_rows(payload: Dict[str, Any]) -> List[List[Any]]:
-    items = payload.get("data") or []
-    rows: List[List[Any]] = []
-    for it in items:
-        # Nested fields
-        nested = (it or {}).get("usulan_data") or {}
-        nested_data = nested.get("data") or {}
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9,id;q=0.8",
+        "Authorization": f"Bearer {token}",
+        "Connection": "keep-alive",
+        "Origin": "https://siasn-instansi.bkn.go.id",
+        "Referer": "https://siasn-instansi.bkn.go.id/layananPengadaan/monitoringUsulan",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-site",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0"
+        ),
+        "sec-ch-ua": '"Not;A=Brand";v="99", "Microsoft Edge";v="139", "Chromium";v="139"',
+        "sec-ch-ua-mobile": "?0",
+        "sec-ch-ua-platform": '"Windows"',
+    }
 
-        no_peserta = nested_data.get("no_peserta") or ""
-        nama = (it or {}).get("nama") or nested_data.get("nama") or ""
-        jenis_pengadaan = "PPPK"  # Hardcoded value
-        jenis_formasi_nama = (it or {}).get("jenis_formasi_nama") or ""
-        tgl_usulan = (it or {}).get("tgl_usulan") or ""
-        tgl_pengiriman_kelayanan = (it or {}).get("tgl_pengiriman_kelayanan") or ""
-        status_usulan = (it or {}).get("status_usulan") or ""
-
-        rows.append(
-            [
-                no_peserta,
-                nama,
-                jenis_pengadaan,
-                jenis_formasi_nama,
-                tgl_usulan,
-                tgl_pengiriman_kelayanan,
-                status_usulan,
-            ]
+    all_data = []
+    offset = 0
+    total = None
+    while True:
+        url = (
+            "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
+            f"?no_peserta=&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024"
+            f"&limit={per_page}&offset={offset}"
         )
-    return rows
+        req = Request(url, headers=headers, method="GET")
+        try:
+            with urlopen(req) as resp:
+                status = resp.getcode()
+                body = resp.read()
+                if status != 200:
+                    raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
+        except HTTPError as e:
+            detail = None
+            try:
+                detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            msg = f"Request failed: {e.code} {e.reason}"
+            if detail:
+                msg += f"\n{detail}"
+            raise RuntimeError(msg)
+        except URLError as e:
+            raise RuntimeError(f"Network error: {e.reason}")
 
+        resp_json = json.loads(body)
+        if total is None:
+            total = resp_json.get("meta", {}).get("total", 0)
+            print(f"Total data: {total}")
+        page_data = resp_json.get("data", [])
+        print(f"Fetched {len(page_data)} items (offset {offset})")
+        all_data.extend(page_data)
+
+        # Pagination logic
+        if len(page_data) < per_page:
+            break
+        offset += per_page
+        time.sleep(1)  # Optional: avoid rate limit
+
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8") as f:
+        json.dump({"data": all_data}, f, ensure_ascii=False)
+    print(f"Saved all data to {out_path}")
 
 def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
-    """Efficiently convert large monitoring_usulan JSON into an Excel file."""
+    """Efficiently convert large monitoring_usulan JSON into an Excel file, excluding status_usulan 30 and 48."""
     print("Converting JSON to Excel (streaming)...")
     if Workbook is None:
         raise RuntimeError("openpyxl not available. Please install it (e.g., pip install openpyxl).")
@@ -232,6 +276,8 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
             tgl_pengiriman_kelayanan = (it or {}).get("tgl_pengiriman_kelayanan") or ""
             status_usulan = (it or {}).get("status_usulan") or ""
             status_id = str(status_usulan)
+            if status_id in ("30", "48"):
+                continue  # Exclude status_usulan 30 and 48
             status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
             ws.append([
                 no_peserta,

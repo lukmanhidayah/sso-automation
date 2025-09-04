@@ -5,7 +5,7 @@ from datetime import datetime
 from browser import setup_driver
 from sso_login import login_sso
 from download_monitoring_usulan import (
-    download_monitoring_usulan,
+    download_monitoring_usulan_paginated,
     convert_monitoring_json_to_excel,
 )
 from drive_upload import upload_file_to_drive
@@ -33,7 +33,7 @@ def run_once():
             print("Login SSO successful. Current URL:", driver.current_url)
             json_out = "data/downloads/monitoring_usulan.json"
             xlsx_out = "data/downloads/monitoring_usulan.xlsx"
-            download_monitoring_usulan(out_path=json_out)
+            download_monitoring_usulan_paginated(out_path=json_out)
             # Convert JSON to Excel with selected fields
             convert_monitoring_json_to_excel(json_path=json_out, excel_path=xlsx_out)
             # Upload to Google Drive after conversion
