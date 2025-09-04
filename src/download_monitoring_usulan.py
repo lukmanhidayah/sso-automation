@@ -163,7 +163,7 @@ def download_monitoring_usulan(
         f.write(body)
 
 def download_monitoring_usulan_paginated(
-    out_path: str, localstorage_path: str = "data/sso_localstorage.json", per_page: int = 10000
+    out_path: str, localstorage_path: str = "data/sso_localstorage.json", per_page: int = 5000
 ) -> None:
     print("Downloading monitoring_usulan data with pagination...")
     token = load_sso_token(localstorage_path)
