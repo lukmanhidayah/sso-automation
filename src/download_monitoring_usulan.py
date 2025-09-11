@@ -1,19 +1,10 @@
 import json
 import os
-import socket
-import time
-from typing import Any, Dict, List
-import concurrent.futures as _fut
-
-import ijson
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
-
-try:
-    # For handling partial HTTP reads robustly
-    from http.client import IncompleteRead  # type: ignore
-except Exception:  # pragma: no cover
-    IncompleteRead = None  # type: ignore
+from urllib.error import HTTPError, URLError
+from typing import Any, Dict, List
+import ijson
+import time
 
 try:
     from openpyxl import Workbook
@@ -118,49 +109,6 @@ def load_sso_token(path: str) -> str:
     return token
 
 
-def _http_get_bytes(req: Request, *, retries: int = 3, timeout: int = 120) -> bytes:
-    """HTTP GET with retries, handling IncompleteRead and transient network errors.
-
-    - Retries on IncompleteRead, timeouts, and URLError.
-    - Raises RuntimeError with concise message after exhausting retries.
-    """
-    last_err: Exception | None = None
-    backoff = 2.0
-    for attempt in range(1, retries + 1):
-        try:
-            with urlopen(req, timeout=timeout) as resp:
-                status = resp.getcode()
-                body = resp.read()
-                if status != 200:
-                    raise HTTPError(
-                        req.full_url, status, f"HTTP {status}", resp.headers, None
-                    )
-                return body
-        except HTTPError as e:
-            # Non-retryable by default (server responded with error)
-            raise
-        except Exception as e:  # Handle transient network/read errors
-            last_err = e
-            is_incomplete = IncompleteRead is not None and isinstance(e, IncompleteRead)
-            is_timeout = isinstance(e, socket.timeout)
-            is_urlerr = isinstance(e, URLError)
-            # Some environments wrap low-level errors into URLError
-            retryable = is_incomplete or is_timeout or is_urlerr
-            if attempt >= retries or not retryable:
-                # Surface clear message when it's an incomplete read
-                if is_incomplete:
-                    try:
-                        partial_len = len(getattr(e, "partial", b""))  # type: ignore[arg-type]
-                    except Exception:
-                        partial_len = 0
-                    raise RuntimeError(f"IncompleteRead({partial_len} bytes read)")
-                raise RuntimeError(str(e))
-            time.sleep(backoff)
-            backoff *= 1.5
-    # Should not reach here
-    raise RuntimeError(str(last_err) if last_err else "Unknown network error")
-
-
 def download_monitoring_usulan(
     out_path: str, localstorage_path: str = "data/sso_localstorage.json"
 ) -> None:
@@ -191,7 +139,11 @@ def download_monitoring_usulan(
 
     req = Request(API_URL, headers=headers, method="GET")
     try:
-        body = _http_get_bytes(req, retries=4, timeout=180)
+        with urlopen(req) as resp:
+            status = resp.getcode()
+            body = resp.read()
+            if status != 200:
+                raise HTTPError(API_URL, status, f"HTTP {status}", resp.headers, None)
     except HTTPError as e:
         # Try to read error body for debugging
         detail = None
@@ -214,10 +166,9 @@ def download_monitoring_usulan(
 def download_monitoring_usulan_paginated(
     out_path: str,
     localstorage_path: str = "data/sso_localstorage.json",
-    per_page: int = 5000,
-    max_workers: int | None = None,
+    per_page: int = 10000,
 ) -> None:
-    print("Downloading monitoring_usulan data with pagination (parallel)...")
+    print("Downloading monitoring_usulan data with pagination...")
     token = load_sso_token(localstorage_path)
 
     headers = {
@@ -240,80 +191,57 @@ def download_monitoring_usulan_paginated(
         "sec-ch-ua-platform": '"Windows"',
     }
 
-    def _build_url(ofs: int) -> str:
-        return (
-            "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
-            f"?no_peserta=&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024"
-            f"&limit={per_page}&offset={ofs}"
-        )
-
-    # Fetch first page to get total count
-    first_req = Request(_build_url(0), headers=headers, method="GET")
-    try:
-        first_body = _http_get_bytes(first_req, retries=4, timeout=180)
-    except HTTPError as e:
-        detail = None
-        try:
-            detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        msg = f"Request failed: {e.code} {e.reason}"
-        if detail:
-            msg += f"\n{detail}"
-        raise RuntimeError(msg)
-    except URLError as e:
-        raise RuntimeError(f"Network error: {e.reason}")
-
-    first_json = json.loads(first_body)
-    total = first_json.get("meta", {}).get("total", 0)
-    first_page = first_json.get("data", [])
-    print(f"Total data: {total}")
-    print(f"Fetched {len(first_page)} items (offset 0)")
-
-    # Prepare remaining offsets
-    offsets: list[int] = []
-    ofs = per_page
-    while ofs < total:
-        offsets.append(ofs)
-        ofs += per_page
-
-    # Concurrency control
-    if max_workers is None:
-        max_workers = min(8, max(2, (os.cpu_count() or 4)))
-
-    results: dict[int, list] = {}
-
-    def _fetch_offset(ofs: int) -> tuple[int, list]:
-        req = Request(_build_url(ofs), headers=headers, method="GET")
-        body = _http_get_bytes(req, retries=4, timeout=180)
-        js = json.loads(body)
-        data = js.get("data", [])
-        print(f"Fetched {len(data)} items (offset {ofs})")
-        return ofs, data
-
-    if offsets:
-        with _fut.ThreadPoolExecutor(max_workers=max_workers) as ex:
-            futs = {ex.submit(_fetch_offset, o): o for o in offsets}
-            for fut in _fut.as_completed(futs):
-                ofs, data = fut.result()
-                results[ofs] = data
-
-    # Write combined JSON in order
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write('{"data":[')
+        offset = 0
+        total = None
         first = True
-        for item in first_page:
-            if not first:
-                f.write(",")
-            f.write(json.dumps(item, ensure_ascii=False))
-            first = False
-        for ofs in sorted(results.keys()):
-            for item in results[ofs]:
+        while True:
+            url = (
+                "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
+                f"?no_peserta=&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024"
+                f"&limit={per_page}&offset={offset}"
+            )
+            req = Request(url, headers=headers, method="GET")
+            try:
+                with urlopen(req) as resp:
+                    status = resp.getcode()
+                    body = resp.read()
+                    if status != 200:
+                        raise HTTPError(
+                            url, status, f"HTTP {status}", resp.headers, None
+                        )
+            except HTTPError as e:
+                detail = None
+                try:
+                    detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                msg = f"Request failed: {e.code} {e.reason}"
+                if detail:
+                    msg += f"\n{detail}"
+                raise RuntimeError(msg)
+            except URLError as e:
+                raise RuntimeError(f"Network error: {e.reason}")
+
+            resp_json = json.loads(body)
+            if total is None:
+                total = resp_json.get("meta", {}).get("total", 0)
+                print(f"Total data: {total}")
+            page_data = resp_json.get("data", [])
+            print(f"Fetched {len(page_data)} items (offset {offset})")
+
+            for item in page_data:
                 if not first:
                     f.write(",")
                 f.write(json.dumps(item, ensure_ascii=False))
                 first = False
+
+            if len(page_data) < per_page:
+                break
+            offset += per_page
+            time.sleep(1)
         f.write("]}")
     print(f"Saved all data to {out_path}")
 
@@ -1534,59 +1462,62 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
         "sec-ch-ua-platform": '"Windows"',
     }
 
-    # Parallel lookup for missing no_peserta, append rows sequentially
-    def _lookup_no_peserta(nop: str) -> tuple[str, dict | None, str | None]:
+    for no_peserta in missing_no_peserta:
+        print(f"Mencari data untuk no_peserta: {no_peserta}")
         url = (
             "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/usulan/monitoring"
-            f"?no_peserta={nop}&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024&limit=1&offset=0"
+            f"?no_peserta={no_peserta}&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024&limit=1&offset=0"
         )
         req = Request(url, headers=headers, method="GET")
         try:
-            body = _http_get_bytes(req, retries=3, timeout=120)
-            resp_json = json.loads(body)
-            page_data = resp_json.get("data", [])
-            if page_data:
-                return nop, page_data[0], None
-            return nop, None, None
+            with urlopen(req) as resp:
+                status = resp.getcode()
+                body = resp.read()
+                if status != 200:
+                    raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
         except HTTPError as e:
             detail = None
             try:
                 detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
             except Exception:
                 pass
-            msg = f"Request failed for {nop}: {e.code} {e.reason}"
+            msg = f"Request failed for {no_peserta}: {e.code} {e.reason}"
             if detail:
                 msg += f"\n{detail}"
-            return nop, None, msg
+            print(msg)
+            continue
         except URLError as e:
-            return nop, None, f"Network error for {nop}: {e.reason}"
-        except Exception as e:
-            return nop, None, f"Error for {nop}: {e}"
+            print(f"Network error for {no_peserta}: {e.reason}")
+            continue
 
-    missing_list = list(missing_no_peserta)
-    if missing_list:
-        workers = min(5, max(2, (os.cpu_count() or 4)))
-        print(
-            f"Mencari data untuk {len(missing_list)} no_peserta secara paralel ({workers} workers)..."
-        )
-        with _fut.ThreadPoolExecutor(max_workers=workers) as ex:
-            for nop, item, err in ex.map(_lookup_no_peserta, missing_list):
-                if err:
-                    print(err)
-                    ws.append([nop, "Tidak Ditemukan", "Tidak Ditemukan"])
-                    continue
-                if item:
-                    nested = (item or {}).get("usulan_data") or {}
-                    nested_data = nested.get("data") or {}
-                    nama = (item or {}).get("nama") or nested_data.get("nama") or ""
-                    status_usulan = (item or {}).get("status_usulan") or ""
-                    status_id = str(status_usulan)
-                    status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
-                    ws.append([nop, nama, status_usulan_name])
-                    print(f"Data ditemukan dan ditambahkan untuk {nop}")
-                else:
-                    ws.append([nop, "Tidak Ditemukan", "Tidak Ditemukan"])
-                    print(f"Data masih tidak ditemukan untuk {nop}")
+        resp_json = json.loads(body)
+        page_data = resp_json.get("data", [])
+        if page_data:
+            item = page_data[0]
+            nested = (item or {}).get("usulan_data") or {}
+            nested_data = nested.get("data") or {}
+            nama = (item or {}).get("nama") or nested_data.get("nama") or ""
+            status_usulan = (item or {}).get("status_usulan") or ""
+            status_id = str(status_usulan)
+            status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
+            ws.append(
+                [
+                    no_peserta,
+                    nama,
+                    status_usulan_name,
+                ]
+            )
+            print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
+        else:
+            ws.append(
+                [
+                    no_peserta,
+                    "Tidak Ditemukan",
+                    "Tidak Ditemukan",
+                ]
+            )
+            print(f"Data masih tidak ditemukan untuk {no_peserta}")
+        time.sleep(1)  # Delay to avoid rate limiting
 
     print(f"Total item diproses: {len(processed_no_peserta)}")
     print(f"Item dengan no_peserta kosong: {missing_count}")
