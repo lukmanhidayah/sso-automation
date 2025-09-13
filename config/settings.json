@@ -5,5 +5,5 @@
   "login_button": "#kc-login",
   "redirect_url": "https://asndigital.bkn.go.id/",
   "timeout": 15,
-  "totp_url": "http://localhost:8001/totp"
+  "totp_url": "http://host.docker.internal:8001/totp"
 }
