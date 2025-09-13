@@ -40,7 +40,11 @@ def run_once():
             pdf_folder_id = "15e0vW-4SJjCjBP8ksIFc1Pw1oUZgJX1F"
             download_monitoring_usulan_paginated(out_path=json_out)
             # Convert JSON to Excel with selected fields
-            convert_monitoring_json_to_excel(json_path=json_out, excel_path=xlsx_out)
+            convert_monitoring_json_to_excel(
+                json_path=json_out,
+                excel_path=xlsx_out,
+                pertek_drive_folder_id=pdf_folder_id,
+            )
             # Download Pertek documents after conversion
             try:
                 download_pertek_documents_from_json(

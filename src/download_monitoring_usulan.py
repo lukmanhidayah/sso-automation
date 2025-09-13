@@ -249,8 +249,16 @@ def download_monitoring_usulan_paginated(
     print(f"Saved all data to {out_path}")
 
 
-def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
-    """Convert monitoring_usulan JSON into an Excel file with only selected No. Peserta."""
+def convert_monitoring_json_to_excel(
+    json_path: str,
+    excel_path: str,
+    pertek_drive_folder_id: str | None = None,
+) -> None:
+    """Convert monitoring_usulan JSON into an Excel file dengan No. Peserta terpilih.
+
+    Jika `pertek_drive_folder_id` diberikan, cek file Pertek yang sudah
+    ada di Google Drive (judul file) dan isi kolom "Drive URL" otomatis.
+    """
     print("Converting JSON to Excel (streaming)...")
     if Workbook is None:
         raise RuntimeError(
@@ -261,17 +269,19 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
         raise FileNotFoundError(f"JSON file not found: {json_path}")
 
     os.makedirs(os.path.dirname(excel_path), exist_ok=True)
+    # Siapkan peta judul->link dari folder Drive berisi PDF Pertek (opsional)
+    drive_title_link_map: dict[str, str] = {}
+    if pertek_drive_folder_id:
+        try:
+            from drive_upload import list_title_to_link_map  # type: ignore
+            drive_title_link_map = list_title_to_link_map(pertek_drive_folder_id)
+        except Exception as e:
+            print(f"Peringatan: gagal memuat daftar file Pertek dari Drive: {e}")
+            drive_title_link_map = {}
     wb = Workbook()
     ws = wb.active
     ws.title = "monitoring_usulan"
-    ws.append(
-        [
-            "No. Peserta",
-            "Nama",
-            "Status Usulan",
-            "Drive URL",
-        ]
-    )
+    ws.append(["No. Peserta", "Nama", "Status Usulan", "Drive URL"])
     for col_idx in range(1, 5):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
         ws.column_dimensions[col_letter].width = 50
@@ -294,7 +304,12 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
             status_usulan = (it or {}).get("status_usulan") or ""
             status_id = str(status_usulan)
             status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
-            ws.append([no_peserta, nama, status_usulan_name, ""])  # Drive URL empty initially
+            nip = (it or {}).get("nip") or ""
+            title_base = _sanitize_filename(
+                f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
+            )
+            drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
+            ws.append([no_peserta, nama, status_usulan_name, drive_url])
             if not no_peserta:
                 missing_count += 1
 
@@ -366,12 +381,18 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
             status_usulan = (item or {}).get("status_usulan") or ""
             status_id = str(status_usulan)
             status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
-            ws.append([no_peserta, nama, status_usulan_name, ""])  # Drive URL empty initially
+            nip = (item or {}).get("nip") or ""
+            title_base = _sanitize_filename(
+                f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
+            )
+            drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
+            ws.append([no_peserta, nama, status_usulan_name, drive_url])
             print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
             # Simpan item untuk ditambahkan ke monitoring_usulan.json
             if isinstance(item, dict):
                 new_items_to_append.append(item)
         else:
+            # Tanpa data item, tidak punya NIP/Nama untuk menebak judul Pertek -> kosongkan
             ws.append([no_peserta, "Tidak Ditemukan", "Tidak Ditemukan", ""])  # no link
             print(f"Data masih tidak ditemukan untuk {no_peserta}")
         time.sleep(1)  # Delay to avoid rate limiting

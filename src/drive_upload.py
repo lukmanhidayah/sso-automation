@@ -97,3 +97,32 @@ def upload_file_to_drive(
 
     print(f"Berhasil upload/replace: {title} (ID: {file_id})")
     return web_link or ""
+
+
+def list_title_to_link_map(target_folder_id: str) -> dict[str, str]:
+    """List all files in a Drive folder and return a map of title -> webViewLink.
+
+    Useful to detect previously uploaded Pertek files and reuse their links
+    when regenerating spreadsheets.
+    """
+    # Resolve project root (one level up from this file's folder)
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = os.path.dirname(script_dir)
+
+    gauth = _build_gauth(project_root)
+    drive = GoogleDrive(gauth)
+
+    mapping: dict[str, str] = {}
+    try:
+        q = "'{}' in parents and trashed=false".format(target_folder_id)
+        for f in drive.ListFile({"q": q}).GetList():
+            title = f.get("title") or f.get("name")
+            file_id = f.get("id")
+            web_link = f.get("webViewLink") or f.get("alternateLink")
+            if not web_link and file_id:
+                web_link = f"https://drive.google.com/file/d/{file_id}/view"
+            if title and web_link:
+                mapping[str(title)] = str(web_link)
+    except Exception as e:
+        print(f"Peringatan: gagal mengambil daftar file Drive: {e}")
+    return mapping
