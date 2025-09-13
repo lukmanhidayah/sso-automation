@@ -325,6 +325,9 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
         "sec-ch-ua-platform": '"Windows"',
     }
 
+    # Tampung item baru yang ditemukan saat pencarian untuk ditambahkan ke JSON
+    new_items_to_append: list[dict] = []
+
     for no_peserta in missing_no_peserta:
         print(f"Mencari data untuk no_peserta: {no_peserta}")
         url = (
@@ -365,10 +368,65 @@ def convert_monitoring_json_to_excel(json_path: str, excel_path: str) -> None:
             status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
             ws.append([no_peserta, nama, status_usulan_name, ""])  # Drive URL empty initially
             print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
+            # Simpan item untuk ditambahkan ke monitoring_usulan.json
+            if isinstance(item, dict):
+                new_items_to_append.append(item)
         else:
             ws.append([no_peserta, "Tidak Ditemukan", "Tidak Ditemukan", ""])  # no link
             print(f"Data masih tidak ditemukan untuk {no_peserta}")
         time.sleep(1)  # Delay to avoid rate limiting
+
+    # Setelah semua pencarian selesai, tambahkan item yang ditemukan ke JSON sumber
+    if new_items_to_append:
+        try:
+            with open(json_path, "r", encoding="utf-8") as jf:
+                try:
+                    root = json.load(jf)
+                except json.JSONDecodeError:
+                    # Jika file kosong/korup, inisialisasi struktur minimal
+                    root = {"data": []}
+            if not isinstance(root, dict):
+                root = {"data": []}
+            data_list = root.get("data")
+            if not isinstance(data_list, list):
+                data_list = []
+                root["data"] = data_list
+
+            # Hindari duplikasi berdasarkan `id` jika ada, fallback ke no_peserta
+            existing_ids = set()
+            existing_np = set()
+            for it in data_list:
+                if isinstance(it, dict):
+                    idv = (it.get("id") or "").strip() if isinstance(it.get("id"), str) else str(it.get("id")) if it.get("id") is not None else ""
+                    if idv:
+                        existing_ids.add(idv)
+                    nested = (it.get("usulan_data") or {}) if isinstance(it.get("usulan_data"), dict) else {}
+                    nested_data = (nested.get("data") or {}) if isinstance(nested.get("data"), dict) else {}
+                    npv = (nested_data.get("no_peserta") or "").strip()
+                    if npv:
+                        existing_np.add(npv)
+
+            appended = 0
+            for it in new_items_to_append:
+                idv = (it.get("id") or "").strip() if isinstance(it.get("id"), str) else str(it.get("id")) if it.get("id") is not None else ""
+                nested = (it.get("usulan_data") or {}) if isinstance(it.get("usulan_data"), dict) else {}
+                nested_data = (nested.get("data") or {}) if isinstance(nested.get("data"), dict) else {}
+                npv = (nested_data.get("no_peserta") or "").strip()
+                if (idv and idv in existing_ids) or (npv and npv in existing_np):
+                    continue
+                data_list.append(it)
+                if idv:
+                    existing_ids.add(idv)
+                if npv:
+                    existing_np.add(npv)
+                appended += 1
+
+            if appended:
+                with open(json_path, "w", encoding="utf-8") as jf:
+                    json.dump(root, jf, ensure_ascii=False)
+                print(f"Ditambahkan {appended} item baru ke {json_path}")
+        except Exception as e:
+            print(f"Gagal menambahkan item ke JSON: {e}")
 
     print(f"Total item diproses: {len(processed_no_peserta)}")
     print(f"Item dengan no_peserta kosong: {missing_count}")
@@ -490,7 +548,7 @@ def download_pertek_documents_from_json(
                 downloaded += 1
                 saved = True
                 print(f"Saved: {out_file}")
-                time.sleep(0.5)  # Tambahkan delay singkat setelah save
+                time.sleep(0.3)  # Tambahkan delay singkat setelah save
             except Exception as e:
                 print(f"Failed saving file {out_file}: {e}")
 
