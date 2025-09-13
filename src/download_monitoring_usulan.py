@@ -398,56 +398,79 @@ def convert_monitoring_json_to_excel(
         time.sleep(1)  # Delay to avoid rate limiting
 
     # Setelah semua pencarian selesai, tambahkan item yang ditemukan ke JSON sumber
+    # Lakukan dengan merge streaming agar tidak memakan memori besar (menghindari container mati)
     if new_items_to_append:
         try:
-            with open(json_path, "r", encoding="utf-8") as jf:
-                try:
-                    root = json.load(jf)
-                except json.JSONDecodeError:
-                    # Jika file kosong/korup, inisialisasi struktur minimal
-                    root = {"data": []}
-            if not isinstance(root, dict):
-                root = {"data": []}
-            data_list = root.get("data")
-            if not isinstance(data_list, list):
-                data_list = []
-                root["data"] = data_list
+            temp_path = json_path + ".tmp"
+            existing_ids: set[str] = set()
+            existing_np: set[str] = set()
 
-            # Hindari duplikasi berdasarkan `id` jika ada, fallback ke no_peserta
-            existing_ids = set()
-            existing_np = set()
-            for it in data_list:
-                if isinstance(it, dict):
-                    idv = (it.get("id") or "").strip() if isinstance(it.get("id"), str) else str(it.get("id")) if it.get("id") is not None else ""
-                    if idv:
-                        existing_ids.add(idv)
+            # Tulis ulang file JSON secara streaming + sisipkan item baru di akhir
+            with open(temp_path, "w", encoding="utf-8") as out_f:
+                out_f.write('{"data":[')
+                first = True
+
+                # Baca data lama secara streaming dan salin apa adanya (dump kembali)
+                try:
+                    with open(json_path, "r", encoding="utf-8") as in_f:
+                        for it in ijson.items(in_f, "data.item"):
+                            if not isinstance(it, dict):
+                                continue
+                            # Kumpulkan kunci unik untuk deduplikasi
+                            idv = (
+                                (it.get("id") or "").strip()
+                                if isinstance(it.get("id"), str)
+                                else str(it.get("id")) if it.get("id") is not None else ""
+                            )
+                            nested = (it.get("usulan_data") or {}) if isinstance(it.get("usulan_data"), dict) else {}
+                            nested_data = (nested.get("data") or {}) if isinstance(nested.get("data"), dict) else {}
+                            npv = (nested_data.get("no_peserta") or "").strip()
+                            if idv:
+                                existing_ids.add(idv)
+                            if npv:
+                                existing_np.add(npv)
+
+                            if not first:
+                                out_f.write(",")
+                            out_f.write(json.dumps(it, ensure_ascii=False))
+                            first = False
+                except (json.JSONDecodeError, FileNotFoundError):
+                    # Jika file belum ada/korup, kita akan memulai dari nol di bawah
+                    pass
+
+                # Tambahkan item baru yang belum ada
+                appended = 0
+                for it in new_items_to_append:
+                    if not isinstance(it, dict):
+                        continue
+                    idv = (
+                        (it.get("id") or "").strip()
+                        if isinstance(it.get("id"), str)
+                        else str(it.get("id")) if it.get("id") is not None else ""
+                    )
                     nested = (it.get("usulan_data") or {}) if isinstance(it.get("usulan_data"), dict) else {}
                     nested_data = (nested.get("data") or {}) if isinstance(nested.get("data"), dict) else {}
                     npv = (nested_data.get("no_peserta") or "").strip()
+                    if (idv and idv in existing_ids) or (npv and npv in existing_np):
+                        continue
+                    if not first:
+                        out_f.write(",")
+                    out_f.write(json.dumps(it, ensure_ascii=False))
+                    first = False
+                    if idv:
+                        existing_ids.add(idv)
                     if npv:
                         existing_np.add(npv)
+                    appended += 1
 
-            appended = 0
-            for it in new_items_to_append:
-                idv = (it.get("id") or "").strip() if isinstance(it.get("id"), str) else str(it.get("id")) if it.get("id") is not None else ""
-                nested = (it.get("usulan_data") or {}) if isinstance(it.get("usulan_data"), dict) else {}
-                nested_data = (nested.get("data") or {}) if isinstance(nested.get("data"), dict) else {}
-                npv = (nested_data.get("no_peserta") or "").strip()
-                if (idv and idv in existing_ids) or (npv and npv in existing_np):
-                    continue
-                data_list.append(it)
-                if idv:
-                    existing_ids.add(idv)
-                if npv:
-                    existing_np.add(npv)
-                appended += 1
+                out_f.write("]}")
 
+            # Ganti file asli dengan yang baru secara atomik
+            os.replace(temp_path, json_path)
             if appended:
-                with open(json_path, "w", encoding="utf-8") as jf:
-                    json.dump(root, jf, ensure_ascii=False)
                 print(f"Ditambahkan {appended} item baru ke {json_path}")
         except Exception as e:
-            print(f"Gagal menambahkan item ke JSON: {e}")
+            print(f"Gagal menambahkan item ke JSON (stream-merge): {e}")
 
     print(f"Total item diproses: {len(processed_no_peserta)}")
     print(f"Item dengan no_peserta kosong: {missing_count}")
