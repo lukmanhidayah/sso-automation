@@ -7,6 +7,7 @@ from sso_login import login_sso
 from download_monitoring_usulan import (
     download_monitoring_usulan_paginated,
     convert_monitoring_json_to_excel,
+    download_pertek_documents_from_json,
 )
 from drive_upload import upload_file_to_drive
 
@@ -33,15 +34,28 @@ def run_once():
             print("Login SSO successful. Current URL:", driver.current_url)
             json_out = "data/downloads/monitoring_usulan.json"
             xlsx_out = "data/downloads/monitoring_usulan.xlsx"
-            download_monitoring_usulan_paginated(out_path=json_out)
+            # Folder Drive untuk Excel (Sheets)
+            excel_folder_id = "15_2IHRXVeajrzO0oYaJ_-ARnkDJsW7YY"
+            # Folder Drive untuk dokumen PDF Pertek
+            pdf_folder_id = "15e0vW-4SJjCjBP8ksIFc1Pw1oUZgJX1F"
+            # download_monitoring_usulan_paginated(out_path=json_out)
             # Convert JSON to Excel with selected fields
-            convert_monitoring_json_to_excel(json_path=json_out, excel_path=xlsx_out)
+            # convert_monitoring_json_to_excel(json_path=json_out, excel_path=xlsx_out)
+            # Download Pertek documents after conversion
+            try:
+                download_pertek_documents_from_json(
+                    json_path=json_out,
+                    out_dir="data/downloads/monitoring_usulan_ttd_pertek",
+                    excel_path=xlsx_out,
+                    drive_folder_id=pdf_folder_id,
+                )
+            except Exception as e:
+                print(f"Gagal download Pertek: {e}")
             # Upload to Google Drive after conversion
             try:
-                target_folder_id = "15_2IHRXVeajrzO0oYaJ_-ARnkDJsW7YY"
                 upload_file_to_drive(
                     xlsx_out,
-                    target_folder_id,
+                    excel_folder_id,
                     convert_spreadsheet=True,
                     replace_by_title=True,
                     custom_title="monitoring_usulan",

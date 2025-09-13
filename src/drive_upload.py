@@ -35,7 +35,7 @@ def upload_file_to_drive(
     convert_spreadsheet: bool = True,
     replace_by_title: bool = True,
     custom_title: Optional[str] = None,
-) -> None:
+) -> str:
     """Upload a single file to Google Drive.
 
     - If ``replace_by_title`` is True, deletes any existing file in the folder with the same title.
@@ -85,5 +85,15 @@ def upload_file_to_drive(
     else:
         file_obj.Upload()
 
-    print(f"Berhasil upload/replace: {title} (ID: {file_obj.get('id')})")
+    # Fetch metadata to build a share/view link
+    try:
+        file_obj.FetchMetadata(fields='id,alternateLink,webViewLink')
+    except Exception:
+        pass
+    file_id = file_obj.get('id')
+    web_link = file_obj.get('webViewLink') or file_obj.get('alternateLink')
+    if not web_link and file_id:
+        web_link = f"https://drive.google.com/file/d/{file_id}/view"
 
+    print(f"Berhasil upload/replace: {title} (ID: {file_id})")
+    return web_link or ""
