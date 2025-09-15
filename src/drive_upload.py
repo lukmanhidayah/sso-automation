@@ -1,31 +1,59 @@
 import os
+import threading
 from typing import Optional
 
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 
 
-def _build_gauth(project_root: str) -> GoogleAuth:
-    gauth = GoogleAuth()
-    gauth.settings = {
-        "client_config_backend": "file",
-        "client_config_file": os.path.join(project_root, "config", "drive", "drive_config.json"),
-        "save_credentials": True,
-        "save_credentials_backend": "file",
-        "save_credentials_file": os.path.join(project_root, "config", "drive", "credentials.json"),
-        "oauth_scope": ["https://www.googleapis.com/auth/drive"],
-    }
+_GAUTH_LOCK = threading.Lock()
 
-    credentials_path = os.path.join(project_root, "config", "drive", "credentials.json")
-    gauth.LoadCredentialsFile(credentials_path)
-    if gauth.credentials is None:
-        gauth.LocalWebserverAuth()
-    elif gauth.access_token_expired:
-        gauth.Refresh()
-    else:
-        gauth.Authorize()
-    gauth.SaveCredentialsFile(credentials_path)
-    return gauth
+
+def _build_gauth(project_root: str) -> GoogleAuth:
+    # Serialize auth/refresh/save to avoid backend races in multi-threaded uploads
+    with _GAUTH_LOCK:
+        gauth = GoogleAuth()
+        credentials_path = os.path.join(project_root, "config", "drive", "credentials.json")
+        client_config_path = os.path.join(project_root, "config", "drive", "drive_config.json")
+
+        # Configure backends explicitly (avoid relying on settings.yaml)
+        gauth.settings = {
+            "client_config_backend": "file",
+            "client_config_file": client_config_path,
+            "save_credentials": True,
+            "save_credentials_backend": "file",
+            "save_credentials_file": credentials_path,
+            "get_refresh_token": True,
+            "oauth_scope": ["https://www.googleapis.com/auth/drive"],
+        }
+
+        # Load existing credentials if present
+        try:
+            gauth.LoadCredentialsFile(credentials_path)
+        except Exception:
+            # Fall back to loading client config only; will auth below if needed
+            try:
+                gauth.LoadClientConfigFile(client_config_path)
+            except Exception:
+                pass
+
+        if gauth.credentials is None:
+            # In non-interactive/container environments, instruct user to auth once on host
+            # We avoid attempting LocalWebserverAuth here to prevent hanging jobs
+            raise RuntimeError(
+                "Google Drive credentials missing. Autentikasi diperlukan. "
+                "Jalankan auth di host untuk mengisi config/drive/credentials.json."
+            )
+        elif gauth.access_token_expired:
+            gauth.Refresh()
+            # Best-effort save; ignore backend misconfiguration errors
+            try:
+                gauth.SaveCredentialsFile(credentials_path)
+            except Exception:
+                pass
+        else:
+            gauth.Authorize()
+        return gauth
 
 
 def upload_file_to_drive(
