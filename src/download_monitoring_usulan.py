@@ -553,11 +553,6 @@ def download_pertek_documents_from_json(
 
             out_file = os.path.join(out_dir, f"{fname_base}.pdf")
 
-            # Skip if already exists
-            if os.path.exists(out_file):
-                skipped += 1
-                continue
-
             url = base_pertek_url + item_id
             req = Request(url, headers=headers, method="GET")
             body = None
