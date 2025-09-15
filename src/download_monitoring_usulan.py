@@ -5,6 +5,7 @@ from urllib.error import HTTPError, URLError
 from typing import Any, Dict, List
 import ijson
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from selected_no_peserta import selected_no_peserta
 
 try:
@@ -491,6 +492,7 @@ def download_pertek_documents_from_json(
     localstorage_path: str = "data/sso_localstorage.json",
     excel_path: str | None = None,
     drive_folder_id: str | None = None,
+    max_workers: int | None = None,
 ) -> None:
     """
     Read monitoring_usulan JSON and download each available Pertek by ID only
@@ -523,109 +525,143 @@ def download_pertek_documents_from_json(
 
     os.makedirs(out_dir, exist_ok=True)
 
-    downloaded = 0
-    skipped = 0
+    # Concurrency settings
+    if max_workers is None:
+        try:
+            max_workers = int(os.getenv("PERTEK_WORKERS", "4"))
+        except ValueError:
+            max_workers = 4
 
+    # Build task list from JSON (only selected participants)
+    tasks: List[Dict[str, str]] = []
+    skipped = 0
     with open(json_path, "r", encoding="utf-8") as f:
         for it in ijson.items(f, "data.item"):
             if not isinstance(it, dict):
                 continue
-
             item_id = (it.get("id") or "").strip()
             if not item_id:
                 skipped += 1
                 continue
-
-            # Compose output filename Pertek_{nip}_{nama}.pdf
             nip = (it.get("nip") or "").strip()
             nama = (it.get("nama") or "").strip()
             nested = (it or {}).get("usulan_data") or {}
             nested_data = nested.get("data") or {}
             no_peserta = (nested_data.get("no_peserta") or "").strip()
 
-            # Hanya unduh untuk peserta terpilih
             if not no_peserta or (no_peserta not in selected_no_peserta):
                 skipped += 1
                 continue
+
             if not nip:
                 nip = item_id
-            fname_base = _sanitize_filename(f"Pertek_{nip}_{nama}" if nama else f"Pertek_{nip}")
-
+            fname_base = _sanitize_filename(
+                f"Pertek_{nip}_{nama}" if nama else f"Pertek_{nip}"
+            )
             out_file = os.path.join(out_dir, f"{fname_base}.pdf")
+            tasks.append(
+                {
+                    "item_id": item_id,
+                    "no_peserta": no_peserta,
+                    "out_file": out_file,
+                }
+            )
 
-            url = base_pertek_url + item_id
-            req = Request(url, headers=headers, method="GET")
-            body = None
-            last_error = None
+    print(f"Total Pertek tasks: {len(tasks)} | skipped (filtered): {skipped}")
+
+    # Worker function for parallel download + optional Drive upload
+    def _worker(task: Dict[str, str]) -> Dict[str, str]:
+        item_id = task["item_id"]
+        no_peserta = task["no_peserta"]
+        out_file = task["out_file"]
+
+        url = base_pertek_url + item_id
+        req = Request(url, headers=headers, method="GET")
+        body = None
+        last_error = None
+        try:
+            with urlopen(req) as resp:
+                status = resp.getcode()
+                data = resp.read()
+                if status == 200 and data:
+                    body = data
+                else:
+                    last_error = f"HTTP {status}"
+        except HTTPError as e:
             try:
-                with urlopen(req) as resp:
-                    status = resp.getcode()
-                    data = resp.read()
-                    if status == 200 and data:
-                        body = data
-                    else:
-                        last_error = f"HTTP {status}"
-            except HTTPError as e:
-                try:
-                    detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-                except Exception:
-                    detail = None
-                last_error = f"{e.code} {e.reason}"
-            except URLError as e:
-                last_error = f"Network error: {e.reason}"
+                _ = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            last_error = f"{e.code} {e.reason}"
+        except URLError as e:
+            last_error = f"Network error: {e.reason}"
 
-            if body is None:
-                print(
-                    f"Gagal download Pertek untuk {nip} {nama} | Alasan: {last_error} | URL: {url}"
+        if body is None:
+            print(f"Gagal download Pertek untuk {no_peserta} | {last_error}")
+            return {"no_peserta": no_peserta, "saved": "0", "drive_url": ""}
+
+        try:
+            with open(out_file, "wb") as of:
+                of.write(body)
+            print(f"Saved: {out_file}")
+            time.sleep(0.1)
+        except Exception as e:
+            print(f"Failed saving file {out_file}: {e}")
+            return {"no_peserta": no_peserta, "saved": "0", "drive_url": ""}
+
+        drive_url = ""
+        if drive_folder_id:
+            try:
+                from drive_upload import upload_file_to_drive  # type: ignore
+
+                title = os.path.splitext(os.path.basename(out_file))[0]
+                drive_url = upload_file_to_drive(
+                    out_file,
+                    drive_folder_id,
+                    convert_spreadsheet=False,
+                    replace_by_title=True,
+                    custom_title=title,
                 )
-                continue
-
-            saved = False
-            try:
-                with open(out_file, "wb") as of:
-                    of.write(body)
-                downloaded += 1
-                saved = True
-                print(f"Saved: {out_file}")
-                time.sleep(0.3)  # Tambahkan delay singkat setelah save
             except Exception as e:
-                print(f"Failed saving file {out_file}: {e}")
+                print(f"Gagal upload ke Drive untuk {out_file}: {e}")
+                drive_url = ""
 
-            drive_url = ""
-            if saved and drive_folder_id:
-                try:
-                    from drive_upload import upload_file_to_drive  # type: ignore
+        return {"no_peserta": no_peserta, "saved": "1", "drive_url": drive_url}
 
-                    title = os.path.splitext(os.path.basename(out_file))[0]
-                    drive_url = upload_file_to_drive(
-                        out_file,
-                        drive_folder_id,
-                        convert_spreadsheet=False,
-                        replace_by_title=True,
-                        custom_title=title,
-                    )
-                except Exception as e:
-                    print(f"Gagal upload ke Drive untuk {out_file}: {e}")
-                    drive_url = ""
+    # Run tasks in parallel
+    downloaded = 0
+    results: List[Dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_worker, t) for t in tasks]
+        for fut in as_completed(futures):
+            try:
+                res = fut.result()
+                results.append(res)
+                if res.get("saved") == "1":
+                    downloaded += 1
+            except Exception as e:
+                print(f"Task error: {e}")
 
-            # Update Excel row with drive_url if provided
-            if excel_path and load_workbook is not None and os.path.exists(excel_path):
-                try:
-                    wb = load_workbook(excel_path)
-                    ws = wb.active
-                    # Use a distinct name to avoid shadowing HTTP request headers
-                    header_map = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
-                    col_np = header_map.get("No. Peserta", 1)
-                    col_url = header_map.get("Drive URL", ws.max_column + 1)
-                    if col_url > ws.max_column:
-                        ws.cell(row=1, column=col_url, value="Drive URL")
-                    if no_peserta:
-                        for r in range(2, ws.max_row + 1):
-                            if str(ws.cell(row=r, column=col_np).value or "").strip() == no_peserta:
-                                ws.cell(row=r, column=col_url, value=drive_url)
-                                break
-                    wb.save(excel_path)
-                except Exception as e:
-                    print(f"Gagal update Excel untuk {no_peserta}: {e}")
+    # Update Excel once at the end to avoid concurrent writes
+    if excel_path and load_workbook is not None and os.path.exists(excel_path):
+        try:
+            wb = load_workbook(excel_path)
+            ws = wb.active
+            header_map = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
+            col_np = header_map.get("No. Peserta", 1)
+            col_url = header_map.get("Drive URL", ws.max_column + 1)
+            if col_url > ws.max_column:
+                ws.cell(row=1, column=col_url, value="Drive URL")
+            url_map = {r["no_peserta"]: r.get("drive_url", "") for r in results if r.get("saved") == "1"}
+            if url_map:
+                for r in range(2, ws.max_row + 1):
+                    np_val = str(ws.cell(row=r, column=col_np).value or "").strip()
+                    if np_val in url_map:
+                        ws.cell(row=r, column=col_url, value=url_map[np_val])
+            wb.save(excel_path)
+        except Exception as e:
+            print(f"Gagal update Excel (batch): {e}")
 
-    print(f"Pertek download complete. Downloaded: {downloaded}, Skipped: {skipped}")
+    print(
+        f"Pertek download complete. Downloaded: {downloaded}, Skipped: {skipped}, Failed: {len(tasks) - downloaded}"
+    )
