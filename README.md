@@ -83,7 +83,7 @@ Linux/Mac (detached/daemon, setiap 15 menit)
 docker run --memory="1.5g" --memory-swap="2g" -d --name sso-automation --restart unless-stopped \
   --add-host=host.docker.internal:host-gateway \
   -e SCHEDULE_MINUTES=15 \
-  -e PERTEK_WORKERS=6 \
+  -e PERTEK_WORKERS=10 \
   -v "$PWD/config:/app/config" \
   -v "$PWD/data:/app/data" \
   sso-automation
