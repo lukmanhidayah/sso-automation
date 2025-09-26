@@ -282,8 +282,8 @@ def convert_monitoring_json_to_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "monitoring_usulan"
-    ws.append(["No. Peserta", "Nama", "Status Usulan", "Drive URL"])
-    for col_idx in range(1, 5):
+    ws.append(["No. Peserta", "NIP", "Nama", "Status Usulan", "Drive URL"])
+    for col_idx in range(1, 6):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
         ws.column_dimensions[col_letter].width = 50
 
@@ -310,7 +310,7 @@ def convert_monitoring_json_to_excel(
                 f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
             )
             drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
-            ws.append([no_peserta, nama, status_usulan_name, drive_url])
+            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url])
             if not no_peserta:
                 missing_count += 1
 
@@ -387,14 +387,14 @@ def convert_monitoring_json_to_excel(
                 f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
             )
             drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
-            ws.append([no_peserta, nama, status_usulan_name, drive_url])
+            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url])
             print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
             # Simpan item untuk ditambahkan ke monitoring_usulan.json
             if isinstance(item, dict):
                 new_items_to_append.append(item)
         else:
             # Tanpa data item, tidak punya NIP/Nama untuk menebak judul Pertek -> kosongkan
-            ws.append([no_peserta, "Tidak Ditemukan", "Tidak Ditemukan", ""])  # no link
+            ws.append([no_peserta, "", "Tidak Ditemukan", "Tidak Ditemukan", ""])  # no link
             print(f"Data masih tidak ditemukan untuk {no_peserta}")
         time.sleep(1)  # Delay to avoid rate limiting
 
