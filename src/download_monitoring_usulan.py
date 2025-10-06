@@ -1,7 +1,7 @@
 import json
 import os
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError, URLError, IncompleteRead
 from typing import Any, Dict, List
 import ijson
 import time
@@ -142,25 +142,37 @@ def download_monitoring_usulan(
     }
 
     req = Request(API_URL, headers=headers, method="GET")
-    try:
-        with urlopen(req) as resp:
-            status = resp.getcode()
-            body = resp.read()
-            if status != 200:
-                raise HTTPError(API_URL, status, f"HTTP {status}", resp.headers, None)
-    except HTTPError as e:
-        # Try to read error body for debugging
-        detail = None
+    max_retries = 3
+    body = None
+    for attempt in range(max_retries):
         try:
-            detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-        except Exception:
-            pass
-        msg = f"Request failed: {e.code} {e.reason}"
-        if detail:
-            msg += f"\n{detail}"
-        raise RuntimeError(msg)
-    except URLError as e:
-        raise RuntimeError(f"Network error: {e.reason}")
+            with urlopen(req, timeout=30) as resp:
+                status = resp.getcode()
+                body = resp.read()
+                if status != 200:
+                    raise HTTPError(API_URL, status, f"HTTP {status}", resp.headers, None)
+            break  # Success, exit retry loop
+        except (HTTPError, URLError, IncompleteRead) as e:
+            if attempt == max_retries - 1:
+                if isinstance(e, HTTPError):
+                    detail = None
+                    try:
+                        detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    msg = f"Request failed: {e.code} {e.reason}"
+                    if detail:
+                        msg += f"\n{detail}"
+                    raise RuntimeError(msg)
+                elif isinstance(e, IncompleteRead):
+                    raise RuntimeError(f"Incomplete read after {max_retries} attempts: {e}")
+                else:
+                    raise RuntimeError(f"Network error after {max_retries} attempts: {e.reason}")
+            print(f"Attempt {attempt + 1} failed: {e}. Retrying in {2 ** attempt} seconds...")
+            time.sleep(2 ** attempt)
+
+    if body is None:
+        raise RuntimeError("Failed to retrieve response body")
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "wb") as f:
@@ -208,26 +220,39 @@ def download_monitoring_usulan_paginated(
                 f"&limit={per_page}&offset={offset}"
             )
             req = Request(url, headers=headers, method="GET")
-            try:
-                with urlopen(req) as resp:
-                    status = resp.getcode()
-                    body = resp.read()
-                    if status != 200:
-                        raise HTTPError(
-                            url, status, f"HTTP {status}", resp.headers, None
-                        )
-            except HTTPError as e:
-                detail = None
+            max_retries = 3
+            body = None
+            for attempt in range(max_retries):
                 try:
-                    detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-                msg = f"Request failed: {e.code} {e.reason}"
-                if detail:
-                    msg += f"\n{detail}"
-                raise RuntimeError(msg)
-            except URLError as e:
-                raise RuntimeError(f"Network error: {e.reason}")
+                    with urlopen(req, timeout=30) as resp:
+                        status = resp.getcode()
+                        body = resp.read()
+                        if status != 200:
+                            raise HTTPError(
+                                url, status, f"HTTP {status}", resp.headers, None
+                            )
+                    break  # Success
+                except (HTTPError, URLError, IncompleteRead) as e:
+                    if attempt == max_retries - 1:
+                        if isinstance(e, HTTPError):
+                            detail = None
+                            try:
+                                detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                            except Exception:
+                                pass
+                            msg = f"Request failed: {e.code} {e.reason}"
+                            if detail:
+                                msg += f"\n{detail}"
+                            raise RuntimeError(msg)
+                        elif isinstance(e, IncompleteRead):
+                            raise RuntimeError(f"Incomplete read after {max_retries} attempts: {e}")
+                        else:
+                            raise RuntimeError(f"Network error after {max_retries} attempts: {e.reason}")
+                    print(f"Attempt {attempt + 1} failed: {e}. Retrying in {2 ** attempt} seconds...")
+                    time.sleep(2 ** attempt)
+
+            if body is None:
+                raise RuntimeError("Failed to retrieve response body")
 
             resp_json = json.loads(body)
             if total is None:
@@ -351,25 +376,40 @@ def convert_monitoring_json_to_excel(
             f"?no_peserta={no_peserta}&nama=&tgl_usulan=&jenis_pengadaan_id=02&jenis_formasi_id=&status_usulan=&periode=2024&limit=1&offset=0"
         )
         req = Request(url, headers=headers, method="GET")
-        try:
-            with urlopen(req) as resp:
-                status = resp.getcode()
-                body = resp.read()
-                if status != 200:
-                    raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
-        except HTTPError as e:
-            detail = None
+        max_retries = 3
+        body = None
+        for attempt in range(max_retries):
             try:
-                detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            msg = f"Request failed for {no_peserta}: {e.code} {e.reason}"
-            if detail:
-                msg += f"\n{detail}"
-            print(msg)
-            continue
-        except URLError as e:
-            print(f"Network error for {no_peserta}: {e.reason}")
+                with urlopen(req, timeout=30) as resp:
+                    status = resp.getcode()
+                    body = resp.read()
+                    if status != 200:
+                        raise HTTPError(url, status, f"HTTP {status}", resp.headers, None)
+                break  # Success
+            except (HTTPError, URLError, IncompleteRead) as e:
+                if attempt == max_retries - 1:
+                    if isinstance(e, HTTPError):
+                        detail = None
+                        try:
+                            detail = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        msg = f"Request failed for {no_peserta}: {e.code} {e.reason}"
+                        if detail:
+                            msg += f"\n{detail}"
+                        print(msg)
+                        continue
+                    elif isinstance(e, IncompleteRead):
+                        print(f"Incomplete read for {no_peserta} after {max_retries} attempts: {e}")
+                        continue
+                    else:
+                        print(f"Network error for {no_peserta} after {max_retries} attempts: {e.reason}")
+                        continue
+                print(f"Attempt {attempt + 1} for {no_peserta} failed: {e}. Retrying in {2 ** attempt} seconds...")
+                time.sleep(2 ** attempt)
+
+        if body is None:
+            print(f"Failed to retrieve response body for {no_peserta}")
             continue
 
         resp_json = json.loads(body)
@@ -579,22 +619,33 @@ def download_pertek_documents_from_json(
         req = Request(url, headers=headers, method="GET")
         body = None
         last_error = None
-        try:
-            with urlopen(req) as resp:
-                status = resp.getcode()
-                data = resp.read()
-                if status == 200 and data:
-                    body = data
-                else:
-                    last_error = f"HTTP {status}"
-        except HTTPError as e:
+        max_retries = 3
+        for attempt in range(max_retries):
             try:
-                _ = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            last_error = f"{e.code} {e.reason}"
-        except URLError as e:
-            last_error = f"Network error: {e.reason}"
+                with urlopen(req, timeout=30) as resp:
+                    status = resp.getcode()
+                    data = resp.read()
+                    if status == 200 and data:
+                        body = data
+                        break  # Success
+                    else:
+                        last_error = f"HTTP {status}"
+            except (HTTPError, URLError, IncompleteRead) as e:
+                if isinstance(e, HTTPError):
+                    try:
+                        _ = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    last_error = f"{e.code} {e.reason}"
+                elif isinstance(e, IncompleteRead):
+                    last_error = f"Incomplete read: {e}"
+                else:
+                    last_error = f"Network error: {e.reason}"
+                if attempt < max_retries - 1:
+                    print(f"Attempt {attempt + 1} for {no_peserta} failed: {last_error}. Retrying in {2 ** attempt} seconds...")
+                    time.sleep(2 ** attempt)
+                else:
+                    last_error = f"{last_error} after {max_retries} attempts"
 
         if body is None:
             print(f"Gagal download Pertek untuk {no_peserta} | {last_error}")
