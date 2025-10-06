@@ -147,7 +147,7 @@ def download_monitoring_usulan(
     body = None
     for attempt in range(max_retries):
         try:
-            with urlopen(req, timeout=30) as resp:
+            with urlopen(req, timeout=300) as resp:
                 status = resp.getcode()
                 body = resp.read()
                 if status != 200:
@@ -225,7 +225,7 @@ def download_monitoring_usulan_paginated(
             body = None
             for attempt in range(max_retries):
                 try:
-                    with urlopen(req, timeout=30) as resp:
+                    with urlopen(req, timeout=300) as resp:
                         status = resp.getcode()
                         body = resp.read()
                         if status != 200:
@@ -381,7 +381,7 @@ def convert_monitoring_json_to_excel(
         body = None
         for attempt in range(max_retries):
             try:
-                with urlopen(req, timeout=30) as resp:
+                with urlopen(req, timeout=300) as resp:
                     status = resp.getcode()
                     body = resp.read()
                     if status != 200:
@@ -623,7 +623,7 @@ def download_pertek_documents_from_json(
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                with urlopen(req, timeout=30) as resp:
+                with urlopen(req, timeout=300) as resp:
                     status = resp.getcode()
                     data = resp.read()
                     if status == 200 and data:
