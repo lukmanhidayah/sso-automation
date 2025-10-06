@@ -1,7 +1,8 @@
 import json
 import os
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError, IncompleteRead
+from urllib.error import HTTPError, URLError
+from http.client import IncompleteRead
 from typing import Any, Dict, List
 import ijson
 import time
