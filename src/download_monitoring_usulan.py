@@ -528,9 +528,9 @@ def download_pertek_documents_from_json(
     # Concurrency settings
     if max_workers is None:
         try:
-            max_workers = int(os.getenv("PERTEK_WORKERS", "4"))
+            max_workers = int(os.getenv("PERTEK_WORKERS", "10"))
         except ValueError:
-            max_workers = 4
+            max_workers = 10
 
     # Build task list from JSON (only selected participants)
     tasks: List[Dict[str, str]] = []
