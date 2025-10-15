@@ -308,8 +308,8 @@ def convert_monitoring_json_to_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "monitoring_usulan"
-    ws.append(["No. Peserta", "NIP", "Nama", "Status Usulan", "Drive URL"])
-    for col_idx in range(1, 6):
+    ws.append(["No. Peserta", "NIP", "Nama", "Status Usulan", "Drive URL", "Drive URL SK"])
+    for col_idx in range(1, 7):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
         ws.column_dimensions[col_letter].width = 50
 
@@ -336,7 +336,7 @@ def convert_monitoring_json_to_excel(
                 f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
             )
             drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
-            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url])
+            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url, ""])
             if not no_peserta:
                 missing_count += 1
 
@@ -428,14 +428,14 @@ def convert_monitoring_json_to_excel(
                 f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
             )
             drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
-            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url])
+            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url, ""])
             print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
             # Simpan item untuk ditambahkan ke monitoring_usulan.json
             if isinstance(item, dict):
                 new_items_to_append.append(item)
         else:
             # Tanpa data item, tidak punya NIP/Nama untuk menebak judul Pertek -> kosongkan
-            ws.append([no_peserta, "", "Tidak Ditemukan", "Tidak Ditemukan", ""])  # no link
+            ws.append([no_peserta, "", "Tidak Ditemukan", "Tidak Ditemukan", "", ""])  # no link
             print(f"Data masih tidak ditemukan untuk {no_peserta}")
         time.sleep(1)  # Delay to avoid rate limiting
 
@@ -532,7 +532,7 @@ def download_pertek_documents_from_json(
     out_dir: str = "data/downloads/monitoring_usulan_ttd_pertek",
     localstorage_path: str = "data/sso_localstorage.json",
     excel_path: str | None = None,
-    drive_folder_id: str | None = None,
+    pertek_drive_folder_id: str | None = "1YCHZI7-x2aDZI-K4W_bFhns4IbrEn0WC",
     max_workers: int | None = None,
 ) -> None:
     """
@@ -604,7 +604,8 @@ def download_pertek_documents_from_json(
                 {
                     "item_id": item_id,
                     "no_peserta": no_peserta,
-                    "out_file": out_file,
+                    "pertek_out_file": out_file,
+                    "sk_out_file": os.path.join(out_dir, f"{fname_base}_SK.pdf"),
                 }
             )
 
@@ -614,71 +615,84 @@ def download_pertek_documents_from_json(
     def _worker(task: Dict[str, str]) -> Dict[str, str]:
         item_id = task["item_id"]
         no_peserta = task["no_peserta"]
-        out_file = task["out_file"]
+        pertek_out = task.get("pertek_out_file")
+        sk_out = task.get("sk_out_file")
 
-        url = base_pertek_url + item_id
-        req = Request(url, headers=headers, method="GET")
-        body = None
-        last_error = None
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                with urlopen(req, timeout=600) as resp:
-                    status = resp.getcode()
-                    data = resp.read()
-                    if status == 200 and data:
-                        body = data
-                        break  # Success
+        results: Dict[str, str] = {"no_peserta": no_peserta, "saved": "0", "drive_url": "", "drive_url_sk": ""}
+
+        # Helper to download a document from a given base url to a target file
+        def _download_doc(base_url: str, target_file: str) -> tuple[bool, str]:
+            url = base_url + item_id
+            req = Request(url, headers=headers, method="GET")
+            body = None
+            last_error = ""
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    with urlopen(req, timeout=600) as resp:
+                        status = resp.getcode()
+                        data = resp.read()
+                        if status == 200 and data:
+                            body = data
+                            break
+                        else:
+                            last_error = f"HTTP {status}"
+                except (HTTPError, URLError, IncompleteRead) as e:
+                    if isinstance(e, HTTPError):
+                        try:
+                            _ = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                        except Exception:
+                            pass
+                        last_error = f"{e.code} {e.reason}"
+                    elif isinstance(e, IncompleteRead):
+                        last_error = f"Incomplete read: {e}"
                     else:
-                        last_error = f"HTTP {status}"
-            except (HTTPError, URLError, IncompleteRead) as e:
-                if isinstance(e, HTTPError):
-                    try:
-                        _ = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
-                    except Exception:
-                        pass
-                    last_error = f"{e.code} {e.reason}"
-                elif isinstance(e, IncompleteRead):
-                    last_error = f"Incomplete read: {e}"
-                else:
-                    last_error = f"Network error: {e.reason}"
-                if attempt < max_retries - 1:
-                    print(f"Attempt {attempt + 1} for {no_peserta} failed: {last_error}. Retrying in {2 ** attempt} seconds...")
-                    time.sleep(2 ** attempt)
-                else:
-                    last_error = f"{last_error} after {max_retries} attempts"
+                        last_error = f"Network error: {getattr(e, 'reason', str(e))}"
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)
+                    else:
+                        last_error = f"{last_error} after {max_retries} attempts"
 
-        if body is None:
-            print(f"Gagal download Pertek untuk {no_peserta} | {last_error}")
-            return {"no_peserta": no_peserta, "saved": "0", "drive_url": ""}
+            if body is None:
+                return False, last_error
 
-        try:
-            with open(out_file, "wb") as of:
-                of.write(body)
-            print(f"Saved: {out_file}")
-            time.sleep(0.1)
-        except Exception as e:
-            print(f"Failed saving file {out_file}: {e}")
-            return {"no_peserta": no_peserta, "saved": "0", "drive_url": ""}
+            try:
+                with open(target_file, "wb") as of:
+                    of.write(body)
+                return True, ""
+            except Exception as e:
+                return False, str(e)
 
-        drive_url = ""
-        if drive_folder_id:
+        # Download Pertek
+        pertek_ok, pertek_err = _download_doc(base_pertek_url, pertek_out) if pertek_out else (False, "no target")
+        if pertek_ok:
+            print(f"Saved: {pertek_out}")
+            results["saved"] = "1"
+        else:
+            print(f"Gagal download Pertek untuk {no_peserta} | {pertek_err}")
+
+        # Upload Pertek to Drive if requested
+        if pertek_ok and pertek_drive_folder_id:
             try:
                 from drive_upload import upload_file_to_drive  # type: ignore
 
-                title = os.path.splitext(os.path.basename(out_file))[0]
+                title = os.path.splitext(os.path.basename(pertek_out))[0]
                 drive_url = upload_file_to_drive(
-                    out_file,
-                    drive_folder_id,
+                    pertek_out,
+                    pertek_drive_folder_id,
                     convert_spreadsheet=False,
                     replace_by_title=True,
                     custom_title=title,
                 )
+                results["drive_url"] = drive_url or ""
             except Exception as e:
-                print(f"Gagal upload ke Drive untuk {out_file}: {e}")
-                drive_url = ""
+                print(f"Gagal upload ke Drive untuk {pertek_out}: {e}")
+                results["drive_url"] = ""
 
-        return {"no_peserta": no_peserta, "saved": "1", "drive_url": drive_url}
+        # Short delay
+        time.sleep(0.1)
+
+        return results
 
     # Run tasks in parallel
     downloaded = 0
@@ -701,15 +715,28 @@ def download_pertek_documents_from_json(
             ws = wb.active
             header_map = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
             col_np = header_map.get("No. Peserta", 1)
-            col_url = header_map.get("Drive URL", ws.max_column + 1)
-            if col_url > ws.max_column:
+            col_url = header_map.get("Drive URL", None)
+            col_url_sk = header_map.get("Drive URL SK", None)
+
+            # Ensure columns exist
+            if col_url is None:
+                col_url = ws.max_column + 1
                 ws.cell(row=1, column=col_url, value="Drive URL")
-            url_map = {r["no_peserta"]: r.get("drive_url", "") for r in results if r.get("saved") == "1"}
-            if url_map:
+            if col_url_sk is None:
+                col_url_sk = ws.max_column + 1 if col_url is not None and col_url >= ws.max_column else ws.max_column + 1
+                ws.cell(row=1, column=col_url_sk, value="Drive URL SK")
+
+            # Build maps
+            url_map = {r["no_peserta"]: r.get("drive_url", "") for r in results if r.get("drive_url")}
+            url_sk_map = {r["no_peserta"]: r.get("drive_url_sk", "") for r in results if r.get("drive_url_sk")}
+
+            if url_map or url_sk_map:
                 for r in range(2, ws.max_row + 1):
                     np_val = str(ws.cell(row=r, column=col_np).value or "").strip()
                     if np_val in url_map:
                         ws.cell(row=r, column=col_url, value=url_map[np_val])
+                    if np_val in url_sk_map:
+                        ws.cell(row=r, column=col_url_sk, value=url_sk_map[np_val])
             wb.save(excel_path)
         except Exception as e:
             print(f"Gagal update Excel (batch): {e}")
@@ -717,3 +744,179 @@ def download_pertek_documents_from_json(
     print(
         f"Pertek download complete. Downloaded: {downloaded}, Skipped: {skipped}, Failed: {len(tasks) - downloaded}"
     )
+
+
+def download_sk_documents_from_json(
+    json_path: str,
+    out_dir: str = "data/downloads/monitoring_usulan_ttd_sk",
+    localstorage_path: str = "data/sso_localstorage.json",
+    excel_path: str | None = None,
+    sk_drive_folder_id: str | None = None,
+    max_workers: int | None = None,
+) -> None:
+    """
+    Download SK documents (SK endpoint) for items in monitoring_usulan JSON where
+    `no_peserta` is in `selected_no_peserta`. Optionally upload to Drive (sk_drive_folder_id)
+    and update the Excel file's "Drive URL SK" column.
+    """
+    print("Downloading SK documents from JSON...")
+    if not os.path.exists(json_path):
+        raise FileNotFoundError(f"JSON file not found: {json_path}")
+
+    token = load_sso_token(localstorage_path)
+
+    base_sk_url = "https://api-siasn.bkn.go.id/siasn-instansi/pengadaan/dokumen/sk/"
+    headers = {
+        "Accept": "application/pdf,application/octet-stream;q=0.9,*/*;q=0.8",
+        "Authorization": f"Bearer {token}",
+        "Origin": "https://siasn-instansi.bkn.go.id",
+        "Referer": "https://siasn-instansi.bkn.go.id/",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0"
+        ),
+    }
+
+    os.makedirs(out_dir, exist_ok=True)
+
+    if max_workers is None:
+        try:
+            max_workers = int(os.getenv("PERTEK_WORKERS", "10"))
+        except ValueError:
+            max_workers = 10
+
+    # Build tasks
+    tasks: List[Dict[str, str]] = []
+    skipped = 0
+    with open(json_path, "r", encoding="utf-8") as f:
+        for it in ijson.items(f, "data.item"):
+            if not isinstance(it, dict):
+                continue
+            item_id = (it.get("id") or "").strip()
+            if not item_id:
+                skipped += 1
+                continue
+            nested = (it or {}).get("usulan_data") or {}
+            nested_data = nested.get("data") or {}
+            no_peserta = (nested_data.get("no_peserta") or "").strip()
+            nip = (it.get("nip") or "").strip()
+            nama = (it.get("nama") or "").strip()
+
+            if not no_peserta or (no_peserta not in selected_no_peserta):
+                skipped += 1
+                continue
+
+            if not nip:
+                nip = item_id
+            fname_base = _sanitize_filename(f"Pertek_{nip}_{nama}" if nama else f"Pertek_{nip}")
+            sk_out = os.path.join(out_dir, f"{fname_base}_SK.pdf")
+            tasks.append({"item_id": item_id, "no_peserta": no_peserta, "sk_out": sk_out})
+
+    print(f"Total SK tasks: {len(tasks)} | skipped (filtered): {skipped}")
+
+    def _worker_sk(task: Dict[str, str]) -> Dict[str, str]:
+        item_id = task["item_id"]
+        no_peserta = task["no_peserta"]
+        sk_out = task["sk_out"]
+        res = {"no_peserta": no_peserta, "saved": "0", "drive_url_sk": ""}
+
+        # download helper
+        url = base_sk_url + item_id
+        req = Request(url, headers=headers, method="GET")
+        body = None
+        last_err = ""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                with urlopen(req, timeout=600) as resp:
+                    status = resp.getcode()
+                    data = resp.read()
+                    if status == 200 and data:
+                        body = data
+                        break
+                    else:
+                        last_err = f"HTTP {status}"
+            except (HTTPError, URLError, IncompleteRead) as e:
+                if isinstance(e, HTTPError):
+                    try:
+                        _ = e.read().decode("utf-8", errors="ignore")  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    last_err = f"{e.code} {e.reason}"
+                elif isinstance(e, IncompleteRead):
+                    last_err = f"Incomplete read: {e}"
+                else:
+                    last_err = f"Network error: {getattr(e, 'reason', str(e))}"
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)
+                else:
+                    last_err = f"{last_err} after {max_retries} attempts"
+
+        if body is None:
+            print(f"Gagal download SK untuk {no_peserta} | {last_err}")
+            return res
+
+        try:
+            with open(sk_out, "wb") as of:
+                of.write(body)
+            res["saved"] = "1"
+            print(f"Saved SK: {sk_out}")
+        except Exception as e:
+            print(f"Failed saving SK {sk_out}: {e}")
+            return res
+
+        if sk_drive_folder_id:
+            try:
+                from drive_upload import upload_file_to_drive  # type: ignore
+
+                title_sk = os.path.splitext(os.path.basename(sk_out))[0]
+                drive_url_sk = upload_file_to_drive(
+                    sk_out,
+                    sk_drive_folder_id,
+                    convert_spreadsheet=False,
+                    replace_by_title=True,
+                    custom_title=title_sk,
+                )
+                res["drive_url_sk"] = drive_url_sk or ""
+            except Exception as e:
+                print(f"Gagal upload SK ke Drive untuk {sk_out}: {e}")
+                res["drive_url_sk"] = ""
+
+        return res
+
+    downloaded = 0
+    results: List[Dict[str, str]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(_worker_sk, t) for t in tasks]
+        for fut in as_completed(futures):
+            try:
+                r = fut.result()
+                results.append(r)
+                if r.get("saved") == "1":
+                    downloaded += 1
+            except Exception as e:
+                print(f"Task SK error: {e}")
+
+    # Update Excel Drive URL SK column
+    if excel_path and load_workbook is not None and os.path.exists(excel_path):
+        try:
+            wb = load_workbook(excel_path)
+            ws = wb.active
+            header_map = {ws.cell(row=1, column=c).value: c for c in range(1, ws.max_column + 1)}
+            col_np = header_map.get("No. Peserta", 1)
+            col_url_sk = header_map.get("Drive URL SK", None)
+            if col_url_sk is None:
+                col_url_sk = ws.max_column + 1
+                ws.cell(row=1, column=col_url_sk, value="Drive URL SK")
+            url_sk_map = {r["no_peserta"]: r.get("drive_url_sk", "") for r in results if r.get("drive_url_sk")}
+            if url_sk_map:
+                for r in range(2, ws.max_row + 1):
+                    np_val = str(ws.cell(row=r, column=col_np).value or "").strip()
+                    if np_val in url_sk_map:
+                        ws.cell(row=r, column=col_url_sk, value=url_sk_map[np_val])
+            wb.save(excel_path)
+        except Exception as e:
+            print(f"Gagal update Excel SK (batch): {e}")
+
+    print(f"SK download complete. Downloaded: {downloaded}, Skipped: {skipped}, Failed: {len(tasks) - downloaded}")

@@ -8,6 +8,7 @@ from download_monitoring_usulan import (
     download_monitoring_usulan_paginated,
     convert_monitoring_json_to_excel,
     download_pertek_documents_from_json,
+    download_sk_documents_from_json,
 )
 from drive_upload import upload_file_to_drive
 
@@ -45,16 +46,30 @@ def run_once():
                 excel_path=xlsx_out,
                 pertek_drive_folder_id=pdf_folder_id,
             )
+
+            # Download SK documents to separate folder
+            try:
+                sk_folder_id = "1YCHZI7-x2aDZI-K4W_bFhns4IbrEn0WC"
+                download_sk_documents_from_json(
+                    json_path=json_out,
+                    out_dir="data/downloads/monitoring_usulan_ttd_sk",
+                    excel_path=xlsx_out,
+                    sk_drive_folder_id=sk_folder_id,
+                )
+            except Exception as e:
+                print(f"Gagal download SK: {e}")
+
             # Download Pertek documents after conversion
             try:
                 download_pertek_documents_from_json(
                     json_path=json_out,
                     out_dir="data/downloads/monitoring_usulan_ttd_pertek",
                     excel_path=xlsx_out,
-                    drive_folder_id=pdf_folder_id,
+                    pertek_drive_folder_id=pdf_folder_id,
                 )
             except Exception as e:
                 print(f"Gagal download Pertek: {e}")
+
             # Upload to Google Drive after conversion
             try:
                 upload_file_to_drive(
