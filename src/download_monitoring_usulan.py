@@ -600,12 +600,16 @@ def download_pertek_documents_from_json(
                 f"Pertek_{nip}_{nama}" if nama else f"Pertek_{nip}"
             )
             out_file = os.path.join(out_dir, f"{fname_base}.pdf")
+            # SK filename should start with SK_ instead of Pertek_
+            sk_fname_base = _sanitize_filename(
+                f"SK_{nip}_{nama}" if nama else f"SK_{nip}"
+            )
             tasks.append(
                 {
                     "item_id": item_id,
                     "no_peserta": no_peserta,
                     "pertek_out_file": out_file,
-                    "sk_out_file": os.path.join(out_dir, f"{fname_base}_SK.pdf"),
+                    "sk_out_file": os.path.join(out_dir, f"{sk_fname_base}.pdf"),
                 }
             )
 
@@ -809,8 +813,8 @@ def download_sk_documents_from_json(
 
             if not nip:
                 nip = item_id
-            fname_base = _sanitize_filename(f"Pertek_{nip}_{nama}" if nama else f"Pertek_{nip}")
-            sk_out = os.path.join(out_dir, f"{fname_base}_SK.pdf")
+            sk_fname_base = _sanitize_filename(f"SK_{nip}_{nama}" if nama else f"SK_{nip}")
+            sk_out = os.path.join(out_dir, f"{sk_fname_base}.pdf")
             tasks.append({"item_id": item_id, "no_peserta": no_peserta, "sk_out": sk_out})
 
     print(f"Total SK tasks: {len(tasks)} | skipped (filtered): {skipped}")
