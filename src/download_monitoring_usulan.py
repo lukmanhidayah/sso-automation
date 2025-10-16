@@ -183,7 +183,7 @@ def download_monitoring_usulan(
 def download_monitoring_usulan_paginated(
     out_path: str,
     localstorage_path: str = "data/sso_localstorage.json",
-    per_page: int = 5000,
+    per_page: int = 10000,
 ) -> None:
     print("Downloading monitoring_usulan data with pagination...")
     token = load_sso_token(localstorage_path)
@@ -308,8 +308,8 @@ def convert_monitoring_json_to_excel(
     wb = Workbook()
     ws = wb.active
     ws.title = "monitoring_usulan"
-    ws.append(["No. Peserta", "NIP", "Nama", "Status Usulan", "Drive URL", "Drive URL SK"])
-    for col_idx in range(1, 7):
+    ws.append(["No. Peserta", "NIP", "Gelar Depan", "Nama", "Gelar Belakang", "Status Usulan", "Unit Kerja", "TMT Mulai", "TMT Selesai", "Drive URL", "Drive URL SK"])
+    for col_idx in range(1, 12):
         col_letter = ws.cell(row=1, column=col_idx).column_letter
         ws.column_dimensions[col_letter].width = 50
 
@@ -332,11 +332,16 @@ def convert_monitoring_json_to_excel(
             status_id = str(status_usulan)
             status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
             nip = (it or {}).get("nip") or ""
+            unor_nama = nested_data.get("unor_nama") or ""
+            glr_depan = nested_data.get("glr_depan") or ""
+            glr_belakang = nested_data.get("glr_belakang") or ""
+            tgl_kontrak_mulai = nested_data.get("tgl_kontrak_mulai") or ""
+            tgl_kontrak_akhir = nested_data.get("tgl_kontrak_akhir") or ""
             title_base = _sanitize_filename(
                 f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
             )
             drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
-            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url, ""])
+            ws.append([no_peserta, nip, glr_depan, nama, glr_belakang, status_usulan_name, unor_nama, tgl_kontrak_mulai, tgl_kontrak_akhir, drive_url, ""])
             if not no_peserta:
                 missing_count += 1
 
@@ -424,18 +429,23 @@ def convert_monitoring_json_to_excel(
             status_id = str(status_usulan)
             status_usulan_name = STATUS_USULAN_MAP.get(status_id, status_id)
             nip = (item or {}).get("nip") or ""
+            unor_nama = nested_data.get("unor_nama") or ""
+            glr_depan = nested_data.get("glr_depan") or ""
+            glr_belakang = nested_data.get("glr_belakang") or ""
+            tgl_kontrak_mulai = nested_data.get("tgl_kontrak_mulai") or ""
+            tgl_kontrak_akhir = nested_data.get("tgl_kontrak_akhir") or ""
             title_base = _sanitize_filename(
                 f"Pertek_{nip}_{nama}" if (nip and nama) else (f"Pertek_{nip}" if nip else "")
             )
             drive_url = drive_title_link_map.get(title_base, "") if title_base else ""
-            ws.append([no_peserta, nip, nama, status_usulan_name, drive_url, ""])
+            ws.append([no_peserta, nip, glr_depan, nama, glr_belakang, status_usulan_name, unor_nama, tgl_kontrak_mulai, tgl_kontrak_akhir, drive_url, ""])
             print(f"Data ditemukan dan ditambahkan untuk {no_peserta}")
             # Simpan item untuk ditambahkan ke monitoring_usulan.json
             if isinstance(item, dict):
                 new_items_to_append.append(item)
         else:
             # Tanpa data item, tidak punya NIP/Nama untuk menebak judul Pertek -> kosongkan
-            ws.append([no_peserta, "", "Tidak Ditemukan", "Tidak Ditemukan", "", ""])  # no link
+            ws.append([no_peserta, "", "", "Tidak Ditemukan", "", "Tidak Ditemukan", "", "", "", "", ""])  # no link
             print(f"Data masih tidak ditemukan untuk {no_peserta}")
         time.sleep(1)  # Delay to avoid rate limiting
 
